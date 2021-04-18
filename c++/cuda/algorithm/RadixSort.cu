@@ -1,4 +1,5 @@
 #include<iostream>
+#include<ctime>
 #include<assert.h>
 #include<algorithm>
 #define EACH_THREAD 32
@@ -6,7 +7,7 @@
 using namespace std;
 template<typename T>
 __device__ unsigned int convert(T t) {
-  assert(false); 
+  assert(false);
 }
 template<>
 __device__ __host__ unsigned int convert(float v) {
@@ -28,7 +29,7 @@ void __global__ RadixSort(float* data, unsigned int* sort_tmp0,unsigned int* sor
   if(idx >= n) {
     return ;
   }
-  //bitwise push 
+  //bitwise push
   for (unsigned int bit = 0;bit < 32;bit++) {
       unsigned int mask = 1<<bit;
       unsigned int cnt0 = 0,cnt1 = 0;
@@ -68,7 +69,6 @@ void __global__ RadixSort(float* data, unsigned int* sort_tmp0,unsigned int* sor
     atomicMin(&min_value,elem);
     __syncthreads();
 
-
     if(min_value == elem) {
       atomicMin(&min_tid, tid);
     }
@@ -76,15 +76,13 @@ void __global__ RadixSort(float* data, unsigned int* sort_tmp0,unsigned int* sor
     if(min_tid == tid) {
       list_idx[tid]++;
       data[i] = deconvert(min_value);
-      if(data[i] == 457) {
-      }
     }
     __syncthreads();
   }
 }
 
 void RadixSortHost(float *v,unsigned int size) {
-  unsigned int sort_tmp0[size],sort_tmp1[size]; 
+  unsigned int sort_tmp0[size],sort_tmp1[size];
   for(int bit = 0;bit < 32;bit++) {
     unsigned int mask = 1 << bit;
     unsigned int cnt0 = 0,cnt1 = 0;
@@ -105,8 +103,8 @@ void RadixSortHost(float *v,unsigned int size) {
     v[i] = deconvert(sort_tmp0[i]);
   }
 }
-__shared__ unsigned int sort_tmp0[1<<18];
-__shared__ unsigned int sort_tmp1[1<<18];
+__shared__ unsigned int sort_tmp0[SIZE * EACH_THREAD];
+__shared__ unsigned int sort_tmp1[SIZE * EACH_THREAD];
 
 int main() {
   int N = SIZE * EACH_THREAD;
@@ -118,6 +116,7 @@ int main() {
   };
   init(a, N);
   float *a_dev;
+  clock_t start ,end;
   unsigned int *sort_tmp0, *sort_tmp1;
   dim3 block(512,1);
   dim3 grid( (N + block.x -1) / block.x /EACH_THREAD , 1);
@@ -126,17 +125,21 @@ int main() {
   cudaMalloc((void**)&sort_tmp1, sizeof(unsigned int)*N);
   cudaMemcpy(a_dev, a, sizeof(float)*N,cudaMemcpyHostToDevice);
   cudaDeviceSynchronize();
+  start = clock();
   RadixSort<EACH_THREAD><<<grid,block>>>(a_dev, sort_tmp0, sort_tmp1, N);
+  cudaDeviceSynchronize();
+  end = clock();
+  cout << "gpu time:" << end - start << endl;
   cudaMemcpy(b, a_dev, sizeof(float)*N, cudaMemcpyDeviceToHost);
   cudaDeviceSynchronize();
   for (int i = 0;i < N;i++) {
-    cout << b[i] <<" ";
+   // cout << b[i] <<" ";
   }
   cout << endl;
   RadixSortHost(a,N);
   for (int i = 0;i < N;i++) {
     if(a[i] != b[i]) {
-      printf("error: index%u gpu:%f cpu:%f\n",i,b[i], a[i]);
+      //printf("error: index%u gpu:%f cpu:%f\n",i,b[i], a[i]);
     }
   }
 

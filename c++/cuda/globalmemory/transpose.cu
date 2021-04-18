@@ -2,18 +2,25 @@
 #include<ctime>
 #include"head.h"
 using namespace std;
-#define C
+#define R
 template<typename T>
 void __global__ transpose(const T* src,T *after,unsigned int row, unsigned int column) {
   unsigned int idx = threadIdx.x + blockDim.x * blockIdx.x * 4;
   unsigned int idy = threadIdx.y + blockDim.y * blockIdx.y;
-  if(idx  + blockDim.x * 3< row && idy < column) {
+  if(idx + blockDim.x * blockIdx.x * 4< row && idy < column) {
     //read merge
 #ifdef R
-    after[idy * row + idx] = src[idx * column + idy];
+    unsigned int fo = idx * column + idy;
+    unsigned int to = idy * row + idx;
+    //read column write row
+    after[to] = src[fo];
+    after[to + blockDim.x] = src[fo + blockDim.x];
+    after[to + blockDim.x*2] = src[fo + blockDim.x*2];
+    after[to + blockDim.x*3] = src[fo + blockDim.x*3];
 #elif define C
+    //read row write column
     after[idx * column + idy] = src[idy * row + idx];
-    after[idx * column + idy] = src[idy * row + idx];
+    //after[idx * column + idy] = src[idy * row + idx];
 
 #endif
   }
