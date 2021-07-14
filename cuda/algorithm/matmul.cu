@@ -1,12 +1,12 @@
 #include<stdio.h>
 #include<stdlib.h>
 
-int reduction(int a) {
-  a += shlf_xor(a, 16);
-  a += shlf_xor(a, 8);
-  a += shfl_xor(a, 4);
-  a += shfl_xor(a, 2);
-  a += shfl_xor(a, 1);
+__device__ int reduction(int a) {
+  a += __shfl_xor(a, 16);
+  a += __shfl_xor(a, 8);
+  a += __shfl_xor(a, 4);
+  a += __shfl_xor(a, 2);
+  a += __shfl_xor(a, 1);
   return a;
 }
 void h_matmul(int *a, int* b,int* target, int height, int width, int width2, int n ) {
@@ -18,31 +18,54 @@ void h_matmul(int *a, int* b,int* target, int height, int width, int width2, int
     }
   }
 }
-template<unsigned int per_deal>
-void __global__ matmul(int *a, int* b,int* target, int height, int width, width2, int n ) {
-  extern  __shared__ int smem[]；
-  int idx = blockDim.x * blockIdx.x + threadIdx.x;
-  int idy = blockDim.y * blockIdx.y + threadIdx.y;
-  smem[threadIdx.y * blockDim.x + threadIdx.x] += a[idx * width + idy] * b[];
-  smem[threadIdx.y * blockDim.x + threadIdx.x] += a[idx * width + idy] * b[];
-
+//thread should match target's size otherwith input's size 
+//per = ceil(width / blockDim.x)
+template<unsigned int per>
+void __global__ matmul(int *a, int* b,int* target, int height, int width, int width2, int n) {
+  //__shared__ int src[blockDim.y][blockDim.x + 1];
+  __shared__ int src[32][32];
+  __shared__ int tmp_target[32][32][per];
+  int b_id = blockIdx.x % per;
+  int idx = b_id * blockDim.x + threadIdx.x;
+  int idy = blockIdx.y * blockDim.y + threadIdx.y;
+  if (idy < height && idx < width) {
+    src[threadIdx.y][threadIdx.x] = a[idy * width + idx];
+  }
+  int pos = blockIdx.y * blockDim.x + threadIdx.x;
+  idx = pos / blockDim.y;
+  idy = pos % blockDim.y;
+  //every thread deal blockDim.x datas
+  int count = 0;
+  for (int i = b_id;i < width; i+=blockDim.x) {
+    tmp_target[blockIdx.y][threadIdx.x][count++] = src[idy][idx] * b[idx * width2 + i];
+  }
+  __syncthreads();
+  int warp_id = pos % 32;
+  int tmp = 0;
+  for (int i = 0;i < count;++i) {
+    tmp = tmp_target[warp_id][threadIdx.x][count];
+    tmp = reduction(tmp);
+    atomicAdd(target + idy * width2 + i*blockDim.x + b_id, tmp);
+  }
 }
 int main(int argc, char* argv[]) {
-  dim3 block(32, 16);
-  int height = 1 << 11;
-  int width = 1 << 11;
+  dim3 block(32, 32);
+  int height = 1 << 10;
+  int width = 1 << 10;
   int N = height * width;
-  int width2 = 1 << 10;
+  constexpr int width2 = 1 << 10;
   int n = width * width2;
   int n1 = height * width2;
-  dim3 grid(width * width2 / block.x, height / block.y);
+  dim3 grid(width2 / block.x, height / block.y);
   int *a, *b, *c;
   a = (int*)malloc(sizeof(int)*N);
   cudaMallocManaged((void**)&a, sizeof(int)*N);
   b = (int*)malloc(sizeof(int)*n);
-  cudaMallocManaged((void**)&a, sizeof(int)*n);
+  cudaMallocManaged((void**)&b, sizeof(int)*n);
+  c = (int*)malloc(sizeof(int)*n1);
   cudaMallocManaged((void**)&c, sizeof(int)*n1);
-  matmul<<<grid, block, block.x * block.y * 2 * sizeof(int)>>>(a, b, target, height, width, width2, N);
+  constexpr int per = (width2 + 32 - 1)/ 32;
+  matmul<per><<<grid, block>>>(a, b, c, height, width, width2, N);
   cudaDeviceSynchronize();
   return 0;
 }
