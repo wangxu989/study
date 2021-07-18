@@ -22,12 +22,12 @@ void h_matmul(int *a, int* b,int* target, int height, int width, int width2, int
 }
 //thread should match target's size otherwith input's size 
 //per = ceil(width / blockDim.x)
-template<unsigned int per>
+template<unsigned int step, unsigned per>
 void __global__ matmul(int *a, int* b,int* target, int height, int width, int width2, int n) {
   //__shared__ int src[blockDim.y][blockDim.x + 1];
   __shared__ int src[32][32 + 1];
   __shared__ int tmp_target[32][32];
-  int b_id = blockIdx.x % per;
+  int b_id = blockIdx.x % step;
   int idx = b_id * blockDim.x + threadIdx.x;
   int idy = blockIdx.y * blockDim.y + threadIdx.y;
   if (idy < height && idx < width) {
@@ -40,7 +40,7 @@ void __global__ matmul(int *a, int* b,int* target, int height, int width, int wi
   int count = 0;
   int tmp = 0;
   int warp_id = threadIdx.x%32;
-  for (int i = b_id;i < width; i+=blockDim.x) {
+  for (int i = b_id;i < width; i += per) {
     tmp_target[pos_y][pos_x]  = src[pos_y][pos_x] * b[idx * width2 + i];
     tmp = tmp_target[threadIdx.y][threadIdx.x];
     __syncthreads();
@@ -57,7 +57,7 @@ int main(int argc, char* argv[]) {
   constexpr int width2 = 1 << 10;
   int n = width * width2;
   int n1 = height * width2;
-  dim3 grid(width2 / block.x, height / block.y);
+  dim3 grid((width2 / block.x) * (width / block.x), height / block.y);
   int *a, *b, *c;
   a = (int*)malloc(sizeof(int)*N);
   cudaMallocManaged((void**)&a, sizeof(int)*N);
@@ -65,16 +65,21 @@ int main(int argc, char* argv[]) {
   cudaMallocManaged((void**)&b, sizeof(int)*n);
   c = (int*)malloc(sizeof(int)*n1);
   cudaMallocManaged((void**)&c, sizeof(int)*n1);
-  constexpr int per = (width2 + 32 - 1)/ 32;
+  constexpr int per = 2048;
+  constexpr int step = (width2 + per - 1)/ per;
+  clock_t s, e;
   float time;
   cudaEvent_t start,end;
   cudaEventCreate(&start);
   cudaEventCreate(&end);
   cudaEventRecord(start);
-  matmul<per><<<grid, block>>>(a, b, c, height, width, width2, N);
+  s = clock();
+  matmul<step, per><<<grid, block>>>(a, b, c, height, width, width2, N);
   cudaEventRecord(end);
   cudaEventSynchronize(end);
+  e = clock();
   cudaEventElapsedTime(&time, start ,end);
   cout << "gpu time is :" << time << "ms" << endl;
+  cout << "gpu time is :" << e -s << "us" << endl;
   return 0;
 }
