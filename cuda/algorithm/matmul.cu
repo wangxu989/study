@@ -40,12 +40,12 @@ void __global__ matmul(int *a, int* b,int* target, int height, int width, int wi
   int count = 0;
   int tmp = 0;
   int warp_id = threadIdx.x%32;
-  for (int i = b_id;i < width; i += per) {
+  for (int i = b_id;i < width2; i += per) {
     tmp_target[pos_y][pos_x]  = src[pos_y][pos_x] * b[idx * width2 + i];
     tmp = tmp_target[threadIdx.y][threadIdx.x];
     __syncthreads();
     if(warp_id == 0) {
-      atomicAdd(&target[idy * width2 + idx + b_id], reduction(tmp));
+      atomicAdd(&target[idy * width2 + b_id], reduction(tmp));
     }
   }
 }
@@ -65,7 +65,7 @@ int main(int argc, char* argv[]) {
   cudaMallocManaged((void**)&b, sizeof(int)*n);
   c = (int*)malloc(sizeof(int)*n1);
   cudaMallocManaged((void**)&c, sizeof(int)*n1);
-  constexpr int per = 2048;
+  constexpr int per = 1024;
   constexpr int step = (width2 + per - 1)/ per;
   clock_t s, e;
   float time;
