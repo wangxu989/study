@@ -1,6 +1,8 @@
 #include<stdio.h>
 #include<stdlib.h>
-
+#include<iostream>
+#include<ctime>
+using namespace std;
 __device__ int reduction(int a) {
   a += __shfl_xor(a, 16);
   a += __shfl_xor(a, 8);
@@ -23,8 +25,8 @@ void h_matmul(int *a, int* b,int* target, int height, int width, int width2, int
 template<unsigned int per>
 void __global__ matmul(int *a, int* b,int* target, int height, int width, int width2, int n) {
   //__shared__ int src[blockDim.y][blockDim.x + 1];
-  __shared__ int src[32][32];
-  __shared__ int tmp_target[32][32][per];
+  __shared__ int src[32][32 + 1];
+  __shared__ int tmp_target[32][32];
   int b_id = blockIdx.x % per;
   int idx = b_id * blockDim.x + threadIdx.x;
   int idy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -32,20 +34,19 @@ void __global__ matmul(int *a, int* b,int* target, int height, int width, int wi
     src[threadIdx.y][threadIdx.x] = a[idy * width + idx];
   }
   int pos = blockIdx.y * blockDim.x + threadIdx.x;
-  idx = pos / blockDim.y;
-  idy = pos % blockDim.y;
-  //every thread deal blockDim.x datas
+  int pos_x = pos / blockDim.y;
+  int pos_y = pos % blockDim.y;
+  //every thread deal width2/blockDim.x datas
   int count = 0;
-  for (int i = b_id;i < width; i+=blockDim.x) {
-    tmp_target[blockIdx.y][threadIdx.x][count++] = src[idy][idx] * b[idx * width2 + i];
-  }
-  __syncthreads();
-  int warp_id = pos % 32;
   int tmp = 0;
-  for (int i = 0;i < count;++i) {
-    tmp = tmp_target[warp_id][threadIdx.x][count];
-    tmp = reduction(tmp);
-    atomicAdd(target + idy * width2 + i*blockDim.x + b_id, tmp);
+  int warp_id = threadIdx.x%32;
+  for (int i = b_id;i < width; i+=blockDim.x) {
+    tmp_target[pos_y][pos_x]  = src[pos_y][pos_x] * b[idx * width2 + i];
+    tmp = tmp_target[threadIdx.y][threadIdx.x];
+    __syncthreads();
+    if(warp_id == 0) {
+      atomicAdd(&target[idy * width2 + idx + b_id], reduction(tmp));
+    }
   }
 }
 int main(int argc, char* argv[]) {
@@ -65,7 +66,15 @@ int main(int argc, char* argv[]) {
   c = (int*)malloc(sizeof(int)*n1);
   cudaMallocManaged((void**)&c, sizeof(int)*n1);
   constexpr int per = (width2 + 32 - 1)/ 32;
+  float time;
+  cudaEvent_t start,end;
+  cudaEventCreate(&start);
+  cudaEventCreate(&end);
+  cudaEventRecord(start);
   matmul<per><<<grid, block>>>(a, b, c, height, width, width2, N);
-  cudaDeviceSynchronize();
+  cudaEventRecord(end);
+  cudaEventSynchronize(end);
+  cudaEventElapsedTime(&time, start ,end);
+  cout << "gpu time is :" << time << "ms" << endl;
   return 0;
 }
